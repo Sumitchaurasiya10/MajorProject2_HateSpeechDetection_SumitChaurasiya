@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+{% block title %}Text Analysis — CyberShield AI{% endblock %}
+
+{% block content %}
+<div class="page">
+  <div class="page-header">
+    <h1>Text Analysis</h1>
+    <p>Analyze individual text or batch process multiple entries</p>
+  </div>
+
+  <!-- Tabs -->
+  <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem">
+    <button class="btn btn-primary" id="tabSingle" onclick="switchTab('single')">Single Text</button>
+    <button class="btn btn-outline" id="tabBatch" onclick="switchTab('batch')">Batch (CSV/Lines)</button>
+  </div>
+
+  <!-- Single -->
+  <div id="panelSingle">
+    <div class="card">
+      <h3>Input Text</h3>
+      <textarea id="singleText" placeholder="Enter text to analyze..." rows="5"></textarea>
+      <div style="display:flex;gap:0.8rem;margin-top:1rem;align-items:center">
+        <button class="btn btn-primary" onclick="analyzeSingle()">Analyze</button>
+        <button class="btn btn-outline" onclick="clearSingle()">Clear</button>
+        <div id="singleSpinner" class="spinner hidden"></div>
+      </div>
+    </div>
+    <div class="card hidden" id="singleResult">
+      <h3>Result</h3>
+      <div id="singleResultContent"></div>
+    </div>
+  </div>
+
+  <!-- Batch -->
+  <div id="panelBatch" class="hidden">
+    <div class="card">
+      <h3>Batch Input</h3>
+      <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.8rem">One text per line, max 50 entries</p>
+      <textarea id="batchText" placeholder="Text one&#10;Text two&#10;Text three..." rows="8"></textarea>
+      <div style="display:flex;gap:0.8rem;margin-top:1rem;align-items:center">
+        <button class="btn btn-primary" onclick="analyzeBatch()">Analyze All</button>
+        <div id="batchSpinner" class="spinner hidden"></div>
+      </div>
+    </div>
+    <div class="card hidden" id="batchResult">
+      <h3>Batch Results</h3>
+      <div id="batchSummary" style="display:flex;gap:1rem;margin-bottom:1.2rem;flex-wrap:wrap"></div>
+      <div id="batchResultContent"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function switchTab(tab) {
+  document.getElementById('panelSingle').classList.toggle('hidden', tab !== 'single');
+  document.getElementById('panelBatch').classList.toggle('hidden', tab !== 'batch');
+  document.getElementById('tabSingle').className = tab === 'single' ? 'btn btn-primary' : 'btn btn-outline';
+  document.getElementById('tabBatch').className  = tab === 'batch'  ? 'btn btn-primary' : 'btn btn-outline';
+}
+
+function clearSingle() {
+  document.getElementById('singleText').value = '';
+  document.getElementById('singleResult').classList.add('hidden');
+}
+
+async function analyzeSingle() {
+  const text = document.getElementById('singleText').value.trim();
+  if (!text) return;
+  const btn = document.querySelector('#panelSingle .btn-primary');
+  btn.disabled = true;
+  document.getElementById('singleSpinner').classList.remove('hidden');
+  document.getElementById('singleResult').classList.add('hidden');
+  try {
+    const res = await fetch('/api/analyze/text', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({text})
+    });
+    const d = await res.json();
+    if (d.error) { alert(d.error); return; }
+    document.getElementById('singleResult').classList.remove('hidden');
+    document.getElementById('singleResultContent').innerHTML = renderResult(d);
+    // Animate bars
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.prob-fill[data-pct]').forEach(el => {
+        el.style.width = el.dataset.pct + '%';
+      });
+    });
+  } finally {
+    document.getElementById('singleSpinner').classList.add('hidden');
+    btn.disabled = false;
+  }
+}
+
+let lastBatchResults = [];
+
+async function analyzeBatch() {
+  const raw = document.getElementById('batchText').value.trim();
+  if (!raw) return;
+  const texts = raw.split('\n').map(t => t.trim()).filter(Boolean);
+  if (texts.length > 50) { alert('Max 50 texts per batch'); return; }
+
+  const btn = document.querySelector('#panelBatch .btn-primary');
+  btn.disabled = true;
+  document.getElementById('batchSpinner').classList.remove('hidden');
+  document.getElementById('batchResult').classList.add('hidden');
+  try {
+    const res = await fetch('/api/analyze/batch', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({texts})
+    });
+    const d = await res.json();
+    if (d.error) { alert(d.error); return; }
+    lastBatchResults = d.results;
+
+    const s = d.summary;
+    const hPct = s.total ? Math.round(s.hate_speech / s.total * 100) : 0;
+    const oPct = s.total ? Math.round(s.offensive    / s.total * 100) : 0;
+    const nPct = s.total ? Math.round(s.clean        / s.total * 100) : 0;
+
+    document.getElementById('batchSummary').innerHTML = `
+      <span class="badge badge-method">Total: ${s.total}</span>
+      <span class="badge badge-hate">🚨 Hate: ${s.hate_speech} (${hPct}%)</span>
+      <span class="badge badge-offensive">⚠️ Offensive: ${s.offensive} (${oPct}%)</span>
+      <span class="badge badge-normal">✅ Normal: ${s.clean} (${nPct}%)</span>
+      <button class="btn btn-outline" onclick="exportCSV()"
+        style="padding:0.3rem 0.8rem;font-size:0.8rem;margin-left:auto">⬇ Export CSV</button>
+    `;
+
+    document.getElementById('batchResultContent').innerHTML = d.results.map((r, i) => `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:1rem;
+                  margin-bottom:0.8rem;background:var(--surface2)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem">
+          <span style="color:var(--muted);font-size:0.78rem;font-family:var(--font-mono);padding-top:2px">#${i+1}</span>
+          ${predBadge(r.prediction)}
+        </div>
+        <p style="color:var(--text);font-size:0.9rem;margin-bottom:0.6rem;
+                  word-break:break-word">"${escHtml(r.text)}"</p>
+        <div style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.4rem">
+          ${miniBar(r.scores)}
+          <span style="color:var(--muted);font-size:0.75rem;font-family:var(--font-mono);flex-shrink:0">
+            ${Math.round(r.confidence * 100)}% · ${getMethodLabel(r.method)}
+          </span>
+        </div>
+        ${(r.categories||[]).filter(c=>c!=='none').map(c=>`<span class="cat-tag">${c}</span>`).join('')}
+      </div>
+    `).join('');
+
+    document.getElementById('batchResult').classList.remove('hidden');
+  } finally {
+    document.getElementById('batchSpinner').classList.add('hidden');
+    btn.disabled = false;
+  }
+}
+
+function exportCSV() {
+  if (!lastBatchResults.length) return;
+  const rows = [['#','Text','Prediction','Confidence','Hate%','Offensive%','Normal%','Categories']];
+  lastBatchResults.forEach((r, i) => {
+    const s = r.scores || {};
+    rows.push([
+      i + 1,
+      `"${(r.text || '').replace(/"/g, '""')}"`,
+      r.prediction,
+      Math.round((r.confidence||0)*100) + '%',
+      Math.round((s.hate_speech||0)*100) + '%',
+      Math.round((s.offensive||0)*100) + '%',
+      Math.round((s.normal||0)*100) + '%',
+      (r.categories||[]).filter(c=>c!=='none').join(';') || 'none'
+    ]);
+  });
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], {type: 'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'hate_speech_results.csv';
+  a.click();
+}
+
+function predBadge(pred) {
+  const cls  = pred === 'Hate Speech' ? 'badge-hate' : pred === 'Offensive' ? 'badge-offensive' : 'badge-normal';
+  const icon = pred === 'Hate Speech' ? '🚨' : pred === 'Offensive' ? '⚠️' : '✅';
+  return `<span class="badge ${cls}">${icon} ${pred}</span>`;
+}
+
+function miniBar(s) {
+  if (!s) return '<div style="flex:1;height:6px;background:var(--border);border-radius:3px"></div>';
+  return `<div style="display:flex;gap:2px;height:6px;flex:1;border-radius:3px;overflow:hidden">
+    <div style="flex:${s.hate_speech||0};background:var(--red)"></div>
+    <div style="flex:${s.offensive||0};background:var(--orange)"></div>
+    <div style="flex:${s.normal||0};background:var(--green)"></div>
+  </div>`;
+}
+
+function getMethodLabel(method) {
+  if (method === 'claude_ai') return '🤖 Claude AI';
+  if (method === 'bilstm')    return '🧠 BiLSTM';
+  return '🔑 Keyword';
+}
+
+function renderResult(d) {
+  const s = d.scores || {};
+  const cats = (d.categories || []).filter(c => c !== 'none');
+  const conf = Math.round((d.confidence||0) * 100);
+  const reasonHtml = (d.reason && d.method === 'claude_ai')
+    ? `<div style="margin-top:0.8rem;background:var(--surface2);
+        border-left:3px solid var(--accent);padding:0.6rem 0.9rem;border-radius:0 6px 6px 0">
+        <p style="color:var(--muted);font-size:0.72rem;margin-bottom:0.2rem;
+           text-transform:uppercase;letter-spacing:0.05em">AI Explanation</p>
+        <p style="color:var(--text);font-size:0.86rem;line-height:1.5">${escHtml(d.reason)}</p>
+      </div>` : '';
+  return `
+    <div style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-bottom:1.2rem;align-items:center">
+      ${predBadge(d.prediction)}
+      <span class="badge badge-method">Confidence: ${conf}%</span>
+      <span class="badge badge-method">${getMethodLabel(d.method)}</span>
+    </div>
+    ${probBar('Hate Speech', s.hate_speech || 0, 'hate')}
+    ${probBar('Offensive',   s.offensive   || 0, 'offensive')}
+    ${probBar('Normal',      s.normal      || 0, 'normal')}
+    ${cats.length ? '<div style="margin-top:0.8rem">' + cats.map(c=>`<span class="cat-tag">${c}</span>`).join('') + '</div>' : ''}
+    ${reasonHtml}
+  `;
+}
+
+function probBar(label, val, type) {
+  const pct = Math.round(val * 100);
+  return `<div class="prob-bar-wrap">
+    <div class="prob-label">
+      <span>${label}</span>
+      <span style="font-family:var(--font-mono)">${pct}%</span>
+    </div>
+    <div class="prob-track">
+      <div class="prob-fill fill-${type}" data-pct="${pct}" style="width:0%"></div>
+    </div>
+  </div>`;
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Ctrl+Enter shortcut
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('singleText').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyzeSingle();
+  });
+  document.getElementById('batchText').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyzeBatch();
+  });
+});
+</script>
+{% endblock %}

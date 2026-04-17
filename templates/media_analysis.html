@@ -1,0 +1,336 @@
+{% extends "base.html" %}
+{% block title %}Media Analysis — CyberShield AI{% endblock %}
+
+{% block head %}
+<style>
+.drop-zone {
+  border: 2px dashed var(--border); border-radius: 10px;
+  padding: 2.5rem; text-align: center; cursor: pointer;
+  transition: all 0.2s; color: var(--muted);
+}
+.drop-zone:hover, .drop-zone.dz-active {
+  border-color: var(--accent); background: rgba(108,99,255,0.05);
+}
+.drop-zone p { font-size: 0.95rem; margin-bottom: 0.2rem; }
+.dz-sub { font-size: 0.8rem !important; color: var(--muted); }
+
+.method-info {
+  display: flex; align-items: flex-start; gap: 0.8rem;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 0.9rem; margin-bottom: 1rem;
+  font-size: 0.84rem; color: var(--muted);
+}
+.method-info .icon { font-size: 1.4rem; flex-shrink: 0; }
+.method-info strong { color: var(--text); display: block; margin-bottom: 0.2rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page">
+  <div class="page-header">
+    <h1>Media Analysis</h1>
+    <p>Upload images or videos — works with OR without API key</p>
+  </div>
+
+  <!-- Tabs -->
+  <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem">
+    <button class="btn btn-primary" id="tabImg" onclick="switchTab('image')">🖼️ Image</button>
+    <button class="btn btn-outline" id="tabVid" onclick="switchTab('video')">🎬 Video</button>
+  </div>
+
+  <!-- ══════════ IMAGE PANEL ══════════ -->
+  <div id="panelImage">
+
+    {#<div class="method-info">
+      <span class="icon">🤖</span>
+      <div>
+        <strong>How image analysis works:</strong>
+        If <code>ANTHROPIC_API_KEY</code> is set → Claude Vision AI analyzes the image visually.<br>
+        Without API key → OCR extracts text from image → Keyword classifier detects hate speech.<br>
+        Both methods give results — API key is <strong>not required</strong>.
+      </div>
+    </div>#}
+
+    <div class="card">
+      <h3>Upload Image</h3>
+      <div id="imgDropZone" class="drop-zone"
+           onclick="document.getElementById('imgInput').click()"
+           ondragover="event.preventDefault();this.classList.add('dz-active')"
+           ondragleave="this.classList.remove('dz-active')"
+           ondrop="handleImgDrop(event)">
+        <div style="font-size:2.5rem;margin-bottom:0.5rem">🖼️</div>
+        <p>Click or drag & drop image</p>
+        <p class="dz-sub">PNG, JPG, GIF, WEBP — max 16MB</p>
+      </div>
+      <input type="file" id="imgInput" accept="image/*" class="hidden" onchange="handleImgFile(this.files[0])">
+
+      <div id="imgPreviewWrap" class="hidden" style="margin-top:1rem">
+        <img id="imgPreview" style="max-width:100%;max-height:280px;border-radius:8px;border:1px solid var(--border)">
+        <p id="imgFileName" style="color:var(--muted);font-size:0.82rem;margin-top:0.5rem"></p>
+        <div style="display:flex;gap:0.8rem;margin-top:0.8rem;align-items:center">
+          <button class="btn btn-primary" onclick="analyzeImage()">Analyze Image</button>
+          <button class="btn btn-outline" onclick="clearImg()">Clear</button>
+          <div id="imgSpinner" class="spinner hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card hidden" id="imgResultCard">
+      <h3>Image Result</h3>
+      <div id="imgResultContent"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ VIDEO PANEL ══════════ -->
+  <div id="panelVideo" class="hidden">
+
+    {#<div class="method-info">
+      <span class="icon">🎬</span>
+      <div>
+        <strong>How video analysis works:</strong>
+        Video is split into frames automatically using OpenCV.<br>
+        With <code>ANTHROPIC_API_KEY</code> → Claude Vision AI analyzes each frame.<br>
+        Without API key → OCR reads text from each frame → Keyword classifier detects hate speech.<br>
+        <strong>Requires:</strong> <code style="color:var(--accent)">pip install opencv-python pytesseract Pillow</code>
+        + install <a href="https://github.com/UB-Mannheim/tesseract/wiki" target="_blank" style="color:var(--accent)">Tesseract OCR</a>
+      </div>
+    </div>#}
+
+    <div class="card">
+      <h3>Upload Video</h3>
+      <div id="vidDropZone" class="drop-zone"
+           onclick="document.getElementById('vidInput').click()"
+           ondragover="event.preventDefault();this.classList.add('dz-active')"
+           ondragleave="this.classList.remove('dz-active')"
+           ondrop="handleVidDrop(event)">
+        <div style="font-size:2.5rem;margin-bottom:0.5rem">🎬</div>
+        <p>Click or drag & drop video</p>
+        <p class="dz-sub">MP4, AVI, MOV, MKV, WEBM — max 200MB</p>
+      </div>
+      <input type="file" id="vidInput" accept="video/*" class="hidden" onchange="handleVidFile(this.files[0])">
+
+      <div id="vidPreviewWrap" class="hidden" style="margin-top:1rem">
+        <video id="vidPreview" controls
+               style="max-width:100%;max-height:260px;border-radius:8px;border:1px solid var(--border)"></video>
+        <p id="vidFileName" style="color:var(--muted);font-size:0.82rem;margin-top:0.5rem"></p>
+        <div style="display:flex;gap:0.8rem;margin-top:0.8rem;align-items:center">
+          <button class="btn btn-primary" onclick="analyzeVideo()">Analyze Video</button>
+          <button class="btn btn-outline" onclick="clearVid()">Clear</button>
+          <div id="vidSpinner" class="spinner hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card hidden" id="vidResultCard">
+      <h3>Video Result</h3>
+      <div id="vidResultContent"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let imgFile = null, vidFile = null;
+
+// ── Tab switch ────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.getElementById('panelImage').classList.toggle('hidden', tab !== 'image');
+  document.getElementById('panelVideo').classList.toggle('hidden', tab !== 'video');
+  document.getElementById('tabImg').className = tab === 'image' ? 'btn btn-primary' : 'btn btn-outline';
+  document.getElementById('tabVid').className = tab === 'video' ? 'btn btn-primary' : 'btn btn-outline';
+}
+
+// ── Image ─────────────────────────────────────────────────────────────
+function handleImgDrop(e) {
+  e.preventDefault();
+  document.getElementById('imgDropZone').classList.remove('dz-active');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) handleImgFile(f);
+  else alert('Please drop an image file (PNG, JPG, GIF, WEBP)');
+}
+function handleImgFile(f) {
+  if (!f) return;
+  imgFile = f;
+  document.getElementById('imgPreview').src = URL.createObjectURL(f);
+  document.getElementById('imgFileName').textContent = f.name + ' (' + (f.size/1024).toFixed(1) + ' KB)';
+  document.getElementById('imgPreviewWrap').classList.remove('hidden');
+  document.getElementById('imgResultCard').classList.add('hidden');
+}
+function clearImg() {
+  imgFile = null;
+  document.getElementById('imgPreview').src = '';
+  document.getElementById('imgPreviewWrap').classList.add('hidden');
+  document.getElementById('imgResultCard').classList.add('hidden');
+  document.getElementById('imgInput').value = '';
+}
+async function analyzeImage() {
+  if (!imgFile) return;
+  document.getElementById('imgSpinner').classList.remove('hidden');
+  document.getElementById('imgResultCard').classList.add('hidden');
+  const fd = new FormData(); fd.append('file', imgFile);
+  try {
+    const res = await fetch('/api/analyze/image', { method: 'POST', body: fd });
+    const d = await res.json();
+    document.getElementById('imgResultContent').innerHTML = renderResult(d);
+    document.getElementById('imgResultCard').classList.remove('hidden');
+  } catch (e) { alert('Network error: ' + e.message); }
+  finally { document.getElementById('imgSpinner').classList.add('hidden'); }
+}
+
+// ── Video ─────────────────────────────────────────────────────────────
+function handleVidDrop(e) {
+  e.preventDefault();
+  document.getElementById('vidDropZone').classList.remove('dz-active');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('video/')) handleVidFile(f);
+  else alert('Please drop a video file');
+}
+function handleVidFile(f) {
+  if (!f) return;
+  vidFile = f;
+  document.getElementById('vidPreview').src = URL.createObjectURL(f);
+  document.getElementById('vidFileName').textContent = f.name + ' (' + (f.size/1024/1024).toFixed(1) + ' MB)';
+  document.getElementById('vidPreviewWrap').classList.remove('hidden');
+  document.getElementById('vidResultCard').classList.add('hidden');
+}
+function clearVid() {
+  vidFile = null;
+  document.getElementById('vidPreview').src = '';
+  document.getElementById('vidPreviewWrap').classList.add('hidden');
+  document.getElementById('vidResultCard').classList.add('hidden');
+  document.getElementById('vidInput').value = '';
+}
+async function analyzeVideo() {
+  if (!vidFile) return;
+  if (vidFile.size > 200 * 1024 * 1024) { alert('Video too large (max 200MB)'); return; }
+  document.getElementById('vidSpinner').classList.remove('hidden');
+  document.getElementById('vidResultCard').classList.add('hidden');
+  const fd = new FormData(); fd.append('file', vidFile);
+  try {
+    const res = await fetch('/api/analyze/video', { method: 'POST', body: fd });
+    const d = await res.json();
+    let extra = '';
+    if (d.frame_details && d.frame_details.length) {
+      extra = `<div style="margin-top:1rem">
+        <p style="color:var(--muted);font-size:0.78rem;margin-bottom:0.5rem;
+           text-transform:uppercase;letter-spacing:0.05em">Frame Details</p>
+        ${d.frame_details.map((f, i) =>
+          `<div style="background:var(--surface2);border-radius:6px;padding:0.6rem;
+                       margin-bottom:0.4rem;font-size:0.84rem;color:var(--muted)">
+             <span style="color:var(--accent);font-family:var(--font-mono)">▸</span>
+             ${escHtml(f)}</div>`
+        ).join('')}
+      </div>`;
+    }
+    document.getElementById('vidResultContent').innerHTML =
+      renderResult(d) +
+      (d.frames_analyzed
+        ? `<p style="color:var(--muted);font-size:0.82rem;margin-top:0.6rem">
+             📊 ${d.frames_analyzed} frames analyzed</p>` : '') +
+      extra;
+    document.getElementById('vidResultCard').classList.remove('hidden');
+  } catch (e) {
+    document.getElementById('vidResultContent').innerHTML = renderError(e.message);
+    document.getElementById('vidResultCard').classList.remove('hidden');
+  } finally { document.getElementById('vidSpinner').classList.add('hidden'); }
+}
+
+// ── Render helpers ────────────────────────────────────────────────────
+const METHOD_LABELS = {
+  'anthropic_vision':       '🤖 Claude Vision AI',
+  'anthropic_vision_video': '🎬 Claude Vision AI (Video)',
+  'ocr_keyword':            '🔍 OCR + Keyword',
+  'ocr_keyword_video':      '🔍 OCR + Keyword (Video)',
+  'no_text_detected':       '📷 No Text Found',
+  'no_text_video':          '📷 No Text in Frames',
+  'cv2_missing':            '⚠️ opencv missing',
+  'video_read_error':       '⚠️ Video Read Error',
+};
+
+function renderResult(d) {
+  if (!d || d.prediction === 'Error') return renderError((d && d.message) || 'Server error');
+
+  const pred = d.prediction || 'Unknown';
+  const cls  = pred === 'Hate Speech' ? 'badge-hate' : pred === 'Offensive' ? 'badge-offensive' : 'badge-normal';
+  const icon = pred === 'Hate Speech' ? '🚨' : pred === 'Offensive' ? '⚠️' : '✅';
+  const conf = Math.round((d.confidence || 0) * 100);
+  const cats = (d.categories || []).filter(c => c !== 'none');
+  const methodLabel = METHOD_LABELS[d.method] || d.method || '—';
+
+  let scoresHtml = '';
+  if (d.scores) {
+    const s = d.scores;
+    scoresHtml = `
+      <div style="margin: 1rem 0">
+        ${bar('Hate Speech', s.hate_speech || 0, 'hate')}
+        ${bar('Offensive',   s.offensive   || 0, 'offensive')}
+        ${bar('Normal',      s.normal      || 0, 'normal')}
+      </div>`;
+  }
+
+  const html = `
+    <div style="display:flex;gap:0.8rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem">
+      <span class="badge ${cls}">${icon} ${pred}</span>
+      <span class="badge badge-method">Confidence: ${conf}%</span>
+      <span class="badge badge-method">${methodLabel}</span>
+    </div>
+    ${scoresHtml}
+    ${d.extracted_text
+      ? `<div style="background:var(--surface2);padding:0.8rem;border-radius:8px;margin-bottom:0.8rem">
+           <p style="color:var(--muted);font-size:0.75rem;margin-bottom:0.3rem;
+                     text-transform:uppercase;letter-spacing:0.05em">Extracted Text</p>
+           <p style="color:var(--text);font-size:0.9rem;word-break:break-word">"${escHtml(d.extracted_text)}"</p>
+         </div>` : ''}
+    ${d.reason
+      ? `<p style="color:var(--muted);font-size:0.87rem;line-height:1.5;margin-bottom:0.8rem">
+           ${escHtml(d.reason)}</p>` : ''}
+    ${cats.length ? `<div>${cats.map(c => `<span class="cat-tag">${c}</span>`).join('')}</div>` : ''}
+  `;
+
+  // Animate bars after render
+  setTimeout(() => {
+    document.querySelectorAll('.prob-fill[data-pct]').forEach(el => {
+      el.style.width = el.dataset.pct + '%';
+    });
+  }, 30);
+
+  return html;
+}
+
+function bar(label, val, type) {
+  const pct = Math.round(val * 100);
+  return `<div class="prob-bar-wrap">
+    <div class="prob-label">
+      <span>${label}</span>
+      <span style="font-family:var(--font-mono)">${pct}%</span>
+    </div>
+    <div class="prob-track">
+      <div class="prob-fill fill-${type}" data-pct="${pct}" style="width:0%"></div>
+    </div>
+  </div>`;
+}
+
+function renderError(msg) {
+  return `
+    <div style="background:rgba(255,23,68,0.08);border:1px solid rgba(255,23,68,0.25);
+                border-radius:8px;padding:1rem">
+      <p style="color:var(--red);font-weight:600;margin-bottom:0.5rem">⚠️ Error</p>
+      <p style="color:var(--muted);font-size:0.88rem;margin-bottom:0.8rem">${escHtml(msg)}</p>
+      <div style="background:var(--surface2);padding:0.8rem;border-radius:6px;font-size:0.82rem;color:var(--muted)">
+        <p style="margin-bottom:0.4rem;color:var(--text)">Fix steps:</p>
+        <p>1. <code style="color:var(--accent)">pip install flask numpy opencv-python pytesseract Pillow anthropic</code></p>
+        <p style="margin-top:0.3rem">2. Install Tesseract OCR: <a href="https://github.com/UB-Mannheim/tesseract/wiki"
+           target="_blank" style="color:var(--accent)">Download here</a> (Windows) or
+           <code style="color:var(--accent)">sudo apt install tesseract-ocr</code> (Linux)</p>
+        <p style="margin-top:0.3rem">3. Restart: <code style="color:var(--accent)">python app.py</code></p>
+      </div>
+    </div>`;
+}
+
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+{% endblock %}

@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}CyberShield AI — Dashboard{% endblock %}
+
+{% block content %}
+<div class="page">
+  <div class="page-header">
+    <h1>CyberShield AI</h1>
+    <p>AI-powered hate speech detection — text & image analysis</p>
+  </div>
+
+  <!-- Quick test -->
+  <div class="card">
+    <h3>Quick Analyze</h3>
+    <textarea id="quickText" placeholder="Paste text here to instantly analyze..." rows="4"></textarea>
+    <div style="display:flex;gap:0.8rem;margin-top:1rem;align-items:center">
+      <button class="btn btn-primary" onclick="quickAnalyze()">
+        <span>Analyze</span>
+      </button>
+      <button class="btn btn-outline" onclick="loadExample()">Load Example</button>
+      <div id="spinner" class="spinner hidden"></div>
+    </div>
+  </div>
+
+  <!-- Result -->
+  <div class="card hidden" id="resultCard">
+    <h3>Result</h3>
+    <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:1.2rem;flex-wrap:wrap">
+      <span id="predBadge" class="badge"></span>
+      <span id="confBadge" class="badge badge-method"></span>
+      <span id="methodBadge" class="badge badge-method"></span>
+    </div>
+    <div id="probBars"></div>
+    <div id="catSection" style="margin-top:1rem"></div>
+    <div id="aiReason" class="hidden"></div>
+  </div>
+
+  <!-- Navigation cards -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem">
+    <a href="/text-analysis" style="text-decoration:none">
+      <div class="card" style="cursor:pointer;transition:border-color 0.2s;border-color:var(--border)"
+           onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="font-size:2rem;margin-bottom:0.8rem">📝</div>
+        <h3 style="color:var(--text);margin-bottom:0.4rem;font-size:1rem">Text Analysis</h3>
+        <p style="color:var(--muted);font-size:0.85rem">Single & batch text classification</p>
+      </div>
+    </a>
+    <a href="/media-analysis" style="text-decoration:none">
+      <div class="card" style="cursor:pointer;transition:border-color 0.2s;border-color:var(--border)"
+           onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="font-size:2rem;margin-bottom:0.8rem">🖼️</div>
+        <h3 style="color:var(--text);margin-bottom:0.4rem;font-size:1rem">Media Analysis</h3>
+        <p style="color:var(--muted);font-size:0.85rem">Image & meme text extraction</p>
+      </div>
+    </a>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const examples = [
+  "I love everyone regardless of their background.",
+  "All those people should be removed from our country!!!",
+  "Women belong in the kitchen, not in boardrooms.",
+  "The weather today is really nice.",
+  "These immigrants are ruining everything for us."
+];
+
+function loadExample() {
+  document.getElementById('quickText').value = examples[Math.floor(Math.random()*examples.length)];
+}
+
+async function quickAnalyze() {
+  const text = document.getElementById('quickText').value.trim();
+  if (!text) return;
+
+  const btn = document.querySelector('.btn-primary');
+  btn.disabled = true;
+  document.getElementById('spinner').classList.remove('hidden');
+  document.getElementById('resultCard').classList.add('hidden');
+
+  try {
+    const res = await fetch('/api/analyze/text', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text})
+    });
+    const d = await res.json();
+    if (d.error) { alert(d.error); return; }
+    renderResult(d);
+  } catch (e) {
+    alert('Server error: ' + e.message);
+  } finally {
+    document.getElementById('spinner').classList.add('hidden');
+    btn.disabled = false;
+  }
+}
+
+function getMethodLabel(method) {
+  if (method === 'claude_ai')  return '🤖 Claude AI';
+  if (method === 'bilstm')     return '🧠 BiLSTM Model';
+  if (method === 'adam')       return '⚡  Classifier';
+  if (method === 'hybrid')     return '⚡ Adam Hybrid';
+  return '🔑 Keyword Classifier';
+}
+
+function renderResult(d) {
+  const card = document.getElementById('resultCard');
+  card.classList.remove('hidden');
+
+  const pred = d.prediction;
+  const badge = document.getElementById('predBadge');
+  badge.textContent = pred === 'Hate Speech' ? '🚨 ' + pred
+                    : pred === 'Offensive'   ? '⚠️ ' + pred
+                    : '✅ ' + pred;
+  badge.className = 'badge ' + (pred === 'Hate Speech' ? 'badge-hate'
+                               : pred === 'Offensive'  ? 'badge-offensive'
+                               : 'badge-normal');
+
+  const conf = Math.round(d.confidence * 100);
+  document.getElementById('confBadge').textContent = `Confidence: ${conf}%`;
+  document.getElementById('methodBadge').textContent = getMethodLabel(d.method);
+
+  const s = d.scores || {};
+  document.getElementById('probBars').innerHTML =
+    bar('Hate Speech', s.hate_speech || 0, 'hate') +
+    bar('Offensive',   s.offensive   || 0, 'offensive') +
+    bar('Normal',      s.normal      || 0, 'normal');
+
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.prob-fill[data-pct]').forEach(el => {
+      el.style.width = el.dataset.pct + '%';
+    });
+  });
+
+  const cats = (d.categories || []).filter(c => c !== 'none');
+  document.getElementById('catSection').innerHTML = cats.length
+    ? '<p style="color:var(--muted);font-size:0.8rem;margin-bottom:0.4rem">Categories detected:</p>' +
+      cats.map(c => `<span class="cat-tag">${c}</span>`).join('')
+    : '';
+
+  // Show AI reason if available
+  const reasonEl = document.getElementById('aiReason');
+  const info = d.reason || d.detail || '';
+  const infoLabel = d.method === 'claude_ai' ? 'AI Explanation' : 'Classifier Detail';
+  if (info) {
+    reasonEl.innerHTML = `<div style="margin-top:1rem;background:var(--surface2);
+      border-left:3px solid var(--accent);padding:0.7rem 1rem;border-radius:0 8px 8px 0">
+      <p style="color:var(--muted);font-size:0.75rem;margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.05em">${infoLabel}</p>
+      <p style="color:var(--text);font-size:0.88rem;line-height:1.5">${escHtml(info)}</p>
+    </div>`;
+    reasonEl.classList.remove('hidden');
+  } else {
+    reasonEl.classList.add('hidden');
+  }
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function bar(label, val, type) {
+  const pct = Math.round(val * 100);
+  return `<div class="prob-bar-wrap">
+    <div class="prob-label"><span>${label}</span><span style="font-family:var(--font-mono)">${pct}%</span></div>
+    <div class="prob-track">
+      <div class="prob-fill fill-${type}" data-pct="${pct}" style="width:0%"></div>
+    </div>
+  </div>`;
+}
+
+// Allow Ctrl+Enter to submit
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('quickText').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) quickAnalyze();
+  });
+});
+</script>
+{% endblock %}
